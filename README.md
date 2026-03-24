@@ -6,6 +6,9 @@ A minimalist HACS-ready Lovelace card for Home Assistant 2026.3 that presents UV
 
 ![UV Dashboard Card Preview](https://github.com/user-attachments/assets/4f7a3500-b4d9-441e-9930-e32ce99e8b01)
 
+<a href="https://buymeacoffee.com/strhwste" target="_blank"><img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" alt="Buy Me A Coffee" style="height: auto !important;width: auto !important;" ></a>
+
+
 ## Installation
 
 1. Add this repository to HACS as a **Dashboard** repository, or copy `uv-dashboard-card.js` to `/config/www/`.
