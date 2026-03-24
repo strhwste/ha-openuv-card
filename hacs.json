@@ -1,5 +1,7 @@
 {
   "name": "UV Dashboard Card",
   "render_readme": true,
-  "homeassistant": "2026.3.0"
+  "homeassistant": "2026.3.0",
+  "content_in_root": true,
+  "filename": "uv-dashboard-card.js"
 }
