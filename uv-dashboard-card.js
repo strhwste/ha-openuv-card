@@ -872,7 +872,6 @@ class UvDashboardCardEditor extends HTMLElement {
           <input
             type="text"
             data-field="title"
-            value="${this._escapeHtml(this._config.title || "")}"
             placeholder="${translations.title}"
           />
         </label>
@@ -886,6 +885,11 @@ class UvDashboardCardEditor extends HTMLElement {
         </label>
       </div>
     `;
+
+    const titleInput = this.shadowRoot.querySelector('input[data-field="title"]');
+    if (titleInput) {
+      titleInput.value = this._config.title || "";
+    }
 
     this.shadowRoot.querySelectorAll("input, select").forEach((element) => {
       element.addEventListener("change", (event) => this._onInputChanged(event));
