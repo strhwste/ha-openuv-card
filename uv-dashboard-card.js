@@ -999,10 +999,7 @@ class UvDashboardCardEditor extends HTMLElement {
 
   // Get auto-detected entities for display in editor.
   _getDetectedEntities() {
-    const card = new UvDashboardCard();
-    card._config = {};
-    card._hass = this._hass;
-    return card._autoDetectEntities();
+    return UvDashboardCard.prototype._autoDetectEntities(this._hass);
   }
 
   // Get available sensor entities for dropdown options.
@@ -1125,10 +1122,11 @@ class UvDashboardCardEditor extends HTMLElement {
       })
       .join("");
 
+    const customUvSensor = this._config.custom_uv_sensor || "";
     const customUvOptions = sensorEntities
       .map(
         (e) =>
-          `<option value="${this._escapeHtml(e)}" ${this._config.custom_uv_sensor === e ? "selected" : ""}>${this._escapeHtml(e)}</option>`
+          `<option value="${this._escapeHtml(e)}" ${customUvSensor === e ? "selected" : ""}>${this._escapeHtml(e)}</option>`
       )
       .join("");
 
@@ -1223,7 +1221,7 @@ class UvDashboardCardEditor extends HTMLElement {
         <label>
           ${translations.editorCustomUv}
           <select data-field="custom_uv_sensor">
-            <option value="" ${!this._config.custom_uv_sensor ? "selected" : ""}>${translations.editorNone}</option>
+            <option value="" ${!customUvSensor ? "selected" : ""}>${translations.editorNone}</option>
             ${customUvOptions}
           </select>
         </label>
