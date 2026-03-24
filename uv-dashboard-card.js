@@ -92,6 +92,12 @@ class UvDashboardCard extends HTMLElement {
     return document.createElement("uv-dashboard-card-editor");
   }
 
+  _escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = String(text);
+    return div.innerHTML;
+  }
+
   _getEntities() {
     return [
       "sensor.aktueller_ozonwert",
@@ -383,7 +389,7 @@ class UvDashboardCard extends HTMLElement {
     const currentUv = this._formatMetricValue("sensor.aktueller_uv_index", 1);
     const uvMeta = this._getUvMeta(uvValue);
     const scalePosition = uvValue === null ? 0 : Math.max(0, Math.min(uvValue, 11)) / 11 * 100;
-    const title = this._config.title || translations.title;
+    const title = this._escapeHtml(this._config.title || translations.title);
     const protectionLabel = this._isProtectionWindowActive()
       ? translations.active
       : translations.inactive;
@@ -777,6 +783,12 @@ class UvDashboardCardEditor extends HTMLElement {
     return card._getTranslations();
   }
 
+  _escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = String(text);
+    return div.innerHTML;
+  }
+
   _onInputChanged(event) {
     const target = event.target;
     const key = target?.dataset?.field;
@@ -860,7 +872,7 @@ class UvDashboardCardEditor extends HTMLElement {
           <input
             type="text"
             data-field="title"
-            value="${this._config.title || ""}"
+            value="${this._escapeHtml(this._config.title || "")}"
             placeholder="${translations.title}"
           />
         </label>

@@ -4,6 +4,8 @@
 
 A minimalist HACS-ready Lovelace card for Home Assistant 2026.3 that presents UV index, ozone, skin-type protection times, and sun protection guidance for a wall-mounted display.
 
+![UV Dashboard Card Preview](https://github.com/user-attachments/assets/4f7a3500-b4d9-441e-9930-e32ce99e8b01)
+
 ## Installation
 
 1. Add this repository to HACS as a **Dashboard** repository, or copy `uv-dashboard-card.js` to `/config/www/`.
