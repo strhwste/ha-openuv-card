@@ -17,6 +17,7 @@ class UvDashboardCard extends HTMLElement {
     this._clockTimer = null;
     this._rendered = false;
     this._timeText = null;
+    this._detectedEntities = null;
   }
 
   connectedCallback() {
@@ -33,7 +34,7 @@ class UvDashboardCard extends HTMLElement {
     }
   }
 
-  // Card config with optional title and language override.
+  // Card config with optional title, language, entities override, and custom UV sensor.
   setConfig(config) {
     if (config && config.title !== undefined && typeof config.title !== "string") {
       throw new Error("The title option must be a string.");
@@ -45,6 +46,18 @@ class UvDashboardCard extends HTMLElement {
       !["auto", "de", "en"].includes(config.language)
     ) {
       throw new Error("The language option must be one of: auto, de, en.");
+    }
+
+    if (
+      config &&
+      config.custom_uv_sensor !== undefined &&
+      typeof config.custom_uv_sensor !== "string"
+    ) {
+      throw new Error("The custom_uv_sensor option must be a string.");
+    }
+
+    if (config && config.entities !== undefined && typeof config.entities !== "object") {
+      throw new Error("The entities option must be an object.");
     }
 
     this._config = {
@@ -61,6 +74,7 @@ class UvDashboardCard extends HTMLElement {
     const hadHass = Boolean(this._hass);
     const previousLanguage = hadHass ? this._getLanguage(this._hass) : null;
     const nextLanguage = this._getLanguage(hass);
+    this._detectedEntities = null;
     const relevantChanged = !hadHass || this._haveRelevantStatesChanged(hass);
     this._hass = hass;
 
@@ -83,7 +97,7 @@ class UvDashboardCard extends HTMLElement {
   static getStubConfig() {
     return {
       type: "custom:uv-dashboard-card",
-      title: "UV & Sonnenschutz",
+      title: "",
       language: "auto",
     };
   }
@@ -98,27 +112,142 @@ class UvDashboardCard extends HTMLElement {
     return div.innerHTML;
   }
 
+  // Auto-detect OpenUV integration entities from hass.states.
+  _autoDetectEntities(hass = this._hass) {
+    if (!hass?.states) {
+      return {};
+    }
+
+    const allEntityIds = Object.keys(hass.states);
+    const detected = {};
+
+    const roles = {
+      current_uv: {
+        patterns: [/current.*uv.*index/i, /aktuell.*uv.*index/i],
+        exclude: /max/i,
+        domains: ["sensor"],
+      },
+      max_uv: {
+        patterns: [/max.*uv.*index/i, /maximal.*uv.*index/i],
+        domains: ["sensor"],
+      },
+      uv_level: {
+        patterns: [/current.*uv.*level/i, /aktuell.*uv.*wert/i],
+        domains: ["sensor"],
+      },
+      ozone: {
+        patterns: [/ozon/i, /ozone.*level/i],
+        domains: ["sensor"],
+      },
+      protection_window: {
+        patterns: [/protection.*window/i, /schutzfenster/i],
+        domains: ["sensor", "binary_sensor"],
+      },
+      skin_type_1: {
+        patterns: [/skin.*type.*1/i, /hauttyp.*1/i],
+        domains: ["sensor"],
+      },
+      skin_type_2: {
+        patterns: [/skin.*type.*2/i, /hauttyp.*2/i],
+        domains: ["sensor"],
+      },
+      skin_type_3: {
+        patterns: [/skin.*type.*3/i, /hauttyp.*3/i],
+        domains: ["sensor"],
+      },
+      skin_type_4: {
+        patterns: [/skin.*type.*4/i, /hauttyp.*4/i],
+        domains: ["sensor"],
+      },
+      skin_type_5: {
+        patterns: [/skin.*type.*5/i, /hauttyp.*5/i],
+        domains: ["sensor"],
+      },
+      skin_type_6: {
+        patterns: [/skin.*type.*6/i, /hauttyp.*6/i],
+        domains: ["sensor"],
+      },
+    };
+
+    for (const [role, def] of Object.entries(roles)) {
+      for (const entityId of allEntityIds) {
+        if (detected[role]) {
+          break;
+        }
+
+        const domain = entityId.split(".")[0];
+        if (!def.domains.includes(domain)) {
+          continue;
+        }
+
+        const matches = def.patterns.some((p) => p.test(entityId));
+        if (!matches) {
+          continue;
+        }
+
+        if (def.exclude && def.exclude.test(entityId)) {
+          continue;
+        }
+
+        detected[role] = entityId;
+      }
+    }
+
+    return detected;
+  }
+
+  // Resolve entity ID for a given role: config override → auto-detect → null.
+  _resolveEntity(role, hass = this._hass) {
+    if (this._config.entities && this._config.entities[role]) {
+      return this._config.entities[role];
+    }
+
+    if (!this._detectedEntities) {
+      this._detectedEntities = this._autoDetectEntities(hass);
+    }
+
+    return this._detectedEntities[role] || null;
+  }
+
   _getEntities() {
-    return [
-      "sensor.aktueller_ozonwert",
-      "sensor.aktueller_uv_index",
-      "sensor.aktueller_uv_wert",
-      "sensor.maximaler_uv_index",
-      "sensor.schutzfenster",
-      "sensor.hauttyp_1_eigenschutzzeit",
-      "sensor.hauttyp_2_eigenschutzzeit",
-      "sensor.hauttyp_3_eigenschutzzeit",
-      "sensor.hauttyp_4_eigenschutzzeit",
-      "sensor.hauttyp_5_eigenschutzzeit",
-      "sensor.hauttyp_6_eigenschutzzeit",
+    const roles = [
+      "current_uv",
+      "max_uv",
+      "uv_level",
+      "ozone",
+      "protection_window",
+      "skin_type_1",
+      "skin_type_2",
+      "skin_type_3",
+      "skin_type_4",
+      "skin_type_5",
+      "skin_type_6",
     ];
+    const entities = roles.map((r) => this._resolveEntity(r)).filter(Boolean);
+
+    if (this._config.custom_uv_sensor) {
+      entities.push(this._config.custom_uv_sensor);
+    }
+
+    return entities;
   }
 
   _haveRelevantStatesChanged(hass) {
     const nextSnapshot = {};
     let changed = false;
 
-    this._getEntities().forEach((entityId) => {
+    // Temporarily use the new hass for auto-detection.
+    const oldDetected = this._detectedEntities;
+    this._detectedEntities = null;
+    const oldHass = this._hass;
+    this._hass = hass;
+
+    const entities = this._getEntities();
+
+    this._hass = oldHass;
+    this._detectedEntities = oldDetected;
+
+    entities.forEach((entityId) => {
       const stateObj = hass?.states?.[entityId];
       const nextValue = stateObj ? String(stateObj.state) : "__missing__";
       nextSnapshot[entityId] = nextValue;
@@ -178,13 +307,15 @@ class UvDashboardCard extends HTMLElement {
         scale: "UV-Skala",
         recommendation: "Empfehlung",
         unavailable: "–",
+        spfLabel: "LSF",
+        reapplyAdvice: "Nachcremen alle 2 Std.",
         uvLevels: ["Niedrig", "Mäßig", "Hoch", "Sehr hoch", "Extrem"],
         alerts: [
           "Geringe UV-Belastung. Kein besonderer Schutz notwendig.",
-          "Mäßige UV-Belastung. Sonnencreme LSF 15+, Kopfbedeckung empfohlen.",
-          "Hohe UV-Belastung. LSF 30+, Schatten aufsuchen zwischen 11–15 Uhr.",
-          "Sehr hohe UV-Belastung. LSF 50+, Aufenthalt im Freien minimieren.",
-          "Extreme UV-Belastung! Möglichst drinnen bleiben.",
+          "Mäßige UV-Belastung. Sonnencreme LSF 15+, Kopfbedeckung empfohlen. Alle 2 Stunden nachcremen.",
+          "Hohe UV-Belastung. LSF 30+, Schatten aufsuchen zwischen 11–15 Uhr. Alle 2 Stunden nachcremen.",
+          "Sehr hohe UV-Belastung. LSF 50+, Aufenthalt im Freien minimieren. Alle 1–2 Stunden nachcremen.",
+          "Extreme UV-Belastung! Möglichst drinnen bleiben. Falls draußen: LSF 50+ und stündlich nachcremen.",
         ],
         protectionPrefix: "⚠ Schutzfenster aktiv – ",
         editorTitle: "Titel",
@@ -192,6 +323,24 @@ class UvDashboardCard extends HTMLElement {
         editorAuto: "Automatisch",
         editorGerman: "Deutsch",
         editorEnglish: "Englisch",
+        editorEntities: "Entitäten",
+        editorAutoDetected: "(automatisch erkannt)",
+        editorNone: "Keine",
+        editorCustomUv: "Eigener UV-Sensor",
+        editorCustomUvHelp: "Optionaler eigener UV-Sensor für aktuellen UV-Wert",
+        editorEntityLabels: {
+          current_uv: "Aktueller UV-Index",
+          max_uv: "Max. UV-Index",
+          uv_level: "UV-Wert",
+          ozone: "Ozonwert",
+          protection_window: "Schutzfenster",
+          skin_type_1: "Hauttyp 1",
+          skin_type_2: "Hauttyp 2",
+          skin_type_3: "Hauttyp 3",
+          skin_type_4: "Hauttyp 4",
+          skin_type_5: "Hauttyp 5",
+          skin_type_6: "Hauttyp 6",
+        },
       },
       en: {
         title: "UV & Sun Protection",
@@ -206,13 +355,15 @@ class UvDashboardCard extends HTMLElement {
         scale: "UV scale",
         recommendation: "Recommendation",
         unavailable: "–",
+        spfLabel: "SPF",
+        reapplyAdvice: "Reapply every 2 hrs",
         uvLevels: ["Low", "Moderate", "High", "Very high", "Extreme"],
         alerts: [
           "Low UV exposure. No special protection required.",
-          "Moderate UV exposure. Sunscreen SPF 15+ and a hat are recommended.",
-          "High UV exposure. SPF 30+ and seek shade between 11 a.m. and 3 p.m.",
-          "Very high UV exposure. SPF 50+ and limit time outdoors.",
-          "Extreme UV exposure! Stay indoors whenever possible.",
+          "Moderate UV exposure. Sunscreen SPF 15+ and a hat are recommended. Reapply every 2 hours.",
+          "High UV exposure. SPF 30+ and seek shade between 11 a.m. and 3 p.m. Reapply every 2 hours.",
+          "Very high UV exposure. SPF 50+ and limit time outdoors. Reapply every 1–2 hours.",
+          "Extreme UV exposure! Stay indoors whenever possible. If outside, use SPF 50+ and reapply every hour.",
         ],
         protectionPrefix: "⚠ Protection window active – ",
         editorTitle: "Title",
@@ -220,6 +371,24 @@ class UvDashboardCard extends HTMLElement {
         editorAuto: "Automatic",
         editorGerman: "German",
         editorEnglish: "English",
+        editorEntities: "Entities",
+        editorAutoDetected: "(auto-detected)",
+        editorNone: "None",
+        editorCustomUv: "Custom UV Sensor",
+        editorCustomUvHelp: "Optional personal UV sensor for current UV reading",
+        editorEntityLabels: {
+          current_uv: "Current UV Index",
+          max_uv: "Max UV Index",
+          uv_level: "UV Level",
+          ozone: "Ozone",
+          protection_window: "Protection Window",
+          skin_type_1: "Skin Type 1",
+          skin_type_2: "Skin Type 2",
+          skin_type_3: "Skin Type 3",
+          skin_type_4: "Skin Type 4",
+          skin_type_5: "Skin Type 5",
+          skin_type_6: "Skin Type 6",
+        },
       },
     };
 
@@ -341,7 +510,8 @@ class UvDashboardCard extends HTMLElement {
   }
 
   _isProtectionWindowActive() {
-    const state = this._formatEntityState("sensor.schutzfenster");
+    const entity = this._resolveEntity("protection_window");
+    const state = this._formatEntityState(entity);
     return ["ein", "on", "active", "aktiv"].includes(String(state).toLowerCase());
   }
 
@@ -352,17 +522,47 @@ class UvDashboardCard extends HTMLElement {
       : uvMeta.advice;
   }
 
+  // SPF recommendation based on skin type (1–6) and current UV index.
+  _getSpfForSkinType(skinType, uvValue) {
+    if (uvValue === null) {
+      return null;
+    }
+
+    if (uvValue < 3) {
+      return skinType <= 2 ? "15" : null;
+    }
+
+    if (uvValue < 6) {
+      return skinType <= 2 ? "30+" : "15";
+    }
+
+    if (uvValue < 8) {
+      return skinType <= 2 ? "50+" : skinType <= 4 ? "30+" : "15+";
+    }
+
+    if (uvValue < 11) {
+      return skinType <= 3 ? "50+" : skinType <= 5 ? "30+" : "30";
+    }
+
+    // UV 11+
+    return skinType <= 5 ? "50+" : "50";
+  }
+
   _renderSkinTypes() {
     const translations = this._getTranslations();
     const colors = ["#F4DFC6", "#E7C59C", "#CD9B6A", "#A76B41", "#70452B", "#3E2618"];
+    const currentUvEntity =
+      this._config.custom_uv_sensor || this._resolveEntity("current_uv");
+    const uvValue = this._getNumericState(currentUvEntity);
 
     return colors
       .map((color, index) => {
-        const minutes = this._formatMetricValue(
-          `sensor.hauttyp_${index + 1}_eigenschutzzeit`,
-          0,
-          ""
-        );
+        const entity = this._resolveEntity(`skin_type_${index + 1}`);
+        const minutes = this._formatMetricValue(entity, 0, "");
+        const spf = this._getSpfForSkinType(index + 1, uvValue);
+        const spfHtml = spf
+          ? `<div class="skin-spf">${translations.spfLabel} ${spf}</div>`
+          : "";
 
         return `
           <div class="skin-card">
@@ -370,6 +570,7 @@ class UvDashboardCard extends HTMLElement {
             <div class="skin-label">${translations.skinType} ${index + 1}</div>
             <div class="skin-value">${minutes}</div>
             <div class="skin-unit">${translations.minutes}</div>
+            ${spfHtml}
           </div>
         `;
       })
@@ -383,12 +584,21 @@ class UvDashboardCard extends HTMLElement {
     }
 
     const translations = this._getTranslations();
-    const uvValue = this._getNumericState("sensor.aktueller_uv_index");
-    const dailyMax = this._formatMetricValue("sensor.maximaler_uv_index", 1);
-    const ozone = this._formatMetricValue("sensor.aktueller_ozonwert", 0, " DU");
-    const currentUv = this._formatMetricValue("sensor.aktueller_uv_index", 1);
+    const currentUvEntity =
+      this._config.custom_uv_sensor || this._resolveEntity("current_uv");
+    const uvValue = this._getNumericState(currentUvEntity);
+    const dailyMax = this._formatMetricValue(this._resolveEntity("max_uv"), 1);
+    const ozone = this._formatMetricValue(
+      this._resolveEntity("ozone"),
+      0,
+      " DU"
+    );
+    const currentUv = this._formatMetricValue(currentUvEntity, 1);
     const uvMeta = this._getUvMeta(uvValue);
-    const scalePosition = uvValue === null ? 0 : Math.max(0, Math.min(uvValue, 11)) / 11 * 100;
+    const scalePosition =
+      uvValue === null
+        ? 0
+        : (Math.max(0, Math.min(uvValue, 11)) / 11) * 100;
     const title = this._escapeHtml(this._config.title || translations.title);
     const protectionLabel = this._isProtectionWindowActive()
       ? translations.active
@@ -410,24 +620,19 @@ class UvDashboardCard extends HTMLElement {
 
         ha-card {
           display: block;
-          background:
-            linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0)),
-            var(--card-background-color, #fff);
+          background: var(--card-background-color, #fff);
           border: 1px solid rgba(0, 0, 0, 0.12);
           border-radius: 12px;
-          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
           overflow: hidden;
         }
 
         .wrap {
           padding: 20px;
-          background:
-            radial-gradient(circle at top right, rgba(255, 193, 7, 0.12), transparent 26%),
-            linear-gradient(
-              180deg,
-              var(--card-background-color, #fff),
-              var(--primary-background-color, #f7f7f7)
-            );
+          background: linear-gradient(
+            180deg,
+            var(--card-background-color, #fff),
+            var(--primary-background-color, #f7f7f7)
+          );
         }
 
         .header,
@@ -482,7 +687,6 @@ class UvDashboardCard extends HTMLElement {
           border: 1px solid rgba(0, 0, 0, 0.12);
           border-radius: 8px;
           background: rgba(255, 255, 255, 0.52);
-          backdrop-filter: blur(8px);
         }
 
         .metric-card {
@@ -576,7 +780,6 @@ class UvDashboardCard extends HTMLElement {
           border-radius: 50%;
           border: 3px solid #fff;
           background: ${uvMeta.color};
-          box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
           transform: translate(-50%, -50%);
           left: ${scalePosition}%;
         }
@@ -627,10 +830,15 @@ class UvDashboardCard extends HTMLElement {
           color: var(--secondary-text-color);
         }
 
+        .skin-spf {
+          font-size: 10px;
+          font-weight: 600;
+          color: var(--accent-color, #ff9800);
+          margin-top: 4px;
+        }
+
         .alert-card {
-          background:
-            linear-gradient(135deg, rgba(255, 193, 7, 0.14), rgba(255, 255, 255, 0.7)),
-            rgba(255, 255, 255, 0.52);
+          background: rgba(255, 255, 255, 0.52);
         }
 
         .alert-copy {
@@ -692,7 +900,7 @@ class UvDashboardCard extends HTMLElement {
               <div class="metric-value">${currentUv}</div>
               <div class="badge-row">
                 <span class="uv-badge" style="background:${uvMeta.color};">${uvMeta.label}</span>
-                <span class="metric-subvalue">${this._formatEntityState("sensor.aktueller_uv_wert")}</span>
+                <span class="metric-subvalue">${this._formatEntityState(this._resolveEntity("uv_level"))}</span>
               </div>
             </div>
 
@@ -789,6 +997,25 @@ class UvDashboardCardEditor extends HTMLElement {
     return div.innerHTML;
   }
 
+  // Get auto-detected entities for display in editor.
+  _getDetectedEntities() {
+    const card = new UvDashboardCard();
+    card._config = {};
+    card._hass = this._hass;
+    return card._autoDetectEntities();
+  }
+
+  // Get available sensor entities for dropdown options.
+  _getSensorEntities() {
+    if (!this._hass?.states) {
+      return [];
+    }
+
+    return Object.keys(this._hass.states)
+      .filter((e) => e.startsWith("sensor.") || e.startsWith("binary_sensor."))
+      .sort();
+  }
+
   _onInputChanged(event) {
     const target = event.target;
     const key = target?.dataset?.field;
@@ -811,6 +1038,30 @@ class UvDashboardCardEditor extends HTMLElement {
       nextConfig.language = value || "auto";
     }
 
+    if (key === "custom_uv_sensor") {
+      if (value) {
+        nextConfig.custom_uv_sensor = value;
+      } else {
+        delete nextConfig.custom_uv_sensor;
+      }
+    }
+
+    // Handle entity overrides.
+    if (key.startsWith("entity_")) {
+      const role = key.replace("entity_", "");
+      if (!nextConfig.entities) {
+        nextConfig.entities = {};
+      }
+      if (value) {
+        nextConfig.entities[role] = value;
+      } else {
+        delete nextConfig.entities[role];
+      }
+      if (Object.keys(nextConfig.entities).length === 0) {
+        delete nextConfig.entities;
+      }
+    }
+
     this._config = nextConfig;
     this.dispatchEvent(
       new CustomEvent("config-changed", {
@@ -828,6 +1079,58 @@ class UvDashboardCardEditor extends HTMLElement {
 
     const translations = this._getTranslations();
     const lang = this._getLanguage();
+    const detected = this._getDetectedEntities();
+    const sensorEntities = this._getSensorEntities();
+    const configEntities = this._config.entities || {};
+
+    const entityRoles = [
+      "current_uv",
+      "max_uv",
+      "uv_level",
+      "ozone",
+      "protection_window",
+      "skin_type_1",
+      "skin_type_2",
+      "skin_type_3",
+      "skin_type_4",
+      "skin_type_5",
+      "skin_type_6",
+    ];
+
+    const entitySelects = entityRoles
+      .map((role) => {
+        const label = translations.editorEntityLabels[role] || role;
+        const detectedId = detected[role] || "";
+        const configuredId = configEntities[role] || "";
+        const autoLabel = detectedId
+          ? `${translations.editorAuto} (${detectedId})`
+          : translations.editorNone;
+
+        const options = sensorEntities
+          .map(
+            (e) =>
+              `<option value="${this._escapeHtml(e)}" ${configuredId === e ? "selected" : ""}>${this._escapeHtml(e)}</option>`
+          )
+          .join("");
+
+        return `
+          <label>
+            ${label}
+            <select data-field="entity_${role}">
+              <option value="" ${!configuredId ? "selected" : ""}>${autoLabel}</option>
+              ${options}
+            </select>
+          </label>
+        `;
+      })
+      .join("");
+
+    const customUvOptions = sensorEntities
+      .map(
+        (e) =>
+          `<option value="${this._escapeHtml(e)}" ${this._config.custom_uv_sensor === e ? "selected" : ""}>${this._escapeHtml(e)}</option>`
+      )
+      .join("");
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -865,6 +1168,39 @@ class UvDashboardCardEditor extends HTMLElement {
           color: var(--primary-text-color);
           font: inherit;
         }
+
+        .section-title {
+          font-size: 14px;
+          font-weight: 600;
+          color: var(--primary-text-color);
+          margin-top: 8px;
+          padding-bottom: 4px;
+          border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+        }
+
+        .help-text {
+          font-size: 11px;
+          color: var(--secondary-text-color);
+          margin-top: -8px;
+        }
+
+        details {
+          margin-top: 4px;
+        }
+
+        summary {
+          cursor: pointer;
+          font-size: 14px;
+          font-weight: 600;
+          color: var(--primary-text-color);
+          padding: 8px 0;
+        }
+
+        .entity-grid {
+          display: grid;
+          gap: 12px;
+          padding-top: 8px;
+        }
       </style>
       <div class="editor" lang="${lang}">
         <label>
@@ -883,6 +1219,22 @@ class UvDashboardCardEditor extends HTMLElement {
             <option value="en" ${this._config.language === "en" ? "selected" : ""}>${translations.editorEnglish}</option>
           </select>
         </label>
+
+        <label>
+          ${translations.editorCustomUv}
+          <select data-field="custom_uv_sensor">
+            <option value="" ${!this._config.custom_uv_sensor ? "selected" : ""}>${translations.editorNone}</option>
+            ${customUvOptions}
+          </select>
+        </label>
+        <div class="help-text">${translations.editorCustomUvHelp}</div>
+
+        <details>
+          <summary>${translations.editorEntities}</summary>
+          <div class="entity-grid">
+            ${entitySelects}
+          </div>
+        </details>
       </div>
     `;
 
