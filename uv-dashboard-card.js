@@ -621,8 +621,10 @@ class UvDashboardCard extends HTMLElement {
         ha-card {
           display: block;
           background: var(--card-background-color, #fff);
-          border: 1px solid rgba(0, 0, 0, 0.12);
-          border-radius: 12px;
+          border-width: var(--ha-card-border-width, 1px);
+          border-style: solid;
+          border-color: var(--ha-card-border-color, var(--divider-color, rgba(0, 0, 0, 0.12)));
+          border-radius: var(--ha-card-border-radius, 12px);
           overflow: hidden;
         }
 
@@ -684,7 +686,7 @@ class UvDashboardCard extends HTMLElement {
         .scale-card,
         .skin-grid,
         .alert-card {
-          border: 1px solid rgba(0, 0, 0, 0.12);
+          border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
           border-radius: 8px;
           background: rgba(255, 255, 255, 0.52);
         }
@@ -965,8 +967,17 @@ class UvDashboardCardEditor extends HTMLElement {
   }
 
   set hass(hass) {
+    const hadHass = Boolean(this._hass);
     this._hass = hass;
-    this._render();
+    if (!hadHass) {
+      this._render();
+    } else {
+      // Update hass on entity pickers without a full re-render to prevent
+      // the editor from resetting while the user is editing.
+      this.shadowRoot.querySelectorAll("ha-entity-picker").forEach((picker) => {
+        picker.hass = hass;
+      });
+    }
   }
 
   _getLanguage() {
@@ -1002,26 +1013,12 @@ class UvDashboardCardEditor extends HTMLElement {
     return UvDashboardCard.prototype._autoDetectEntities(this._hass);
   }
 
-  // Get available sensor entities for dropdown options.
-  _getSensorEntities() {
-    if (!this._hass?.states) {
-      return [];
-    }
-
-    return Object.keys(this._hass.states)
-      .filter((e) => e.startsWith("sensor.") || e.startsWith("binary_sensor."))
-      .sort();
-  }
-
-  _onInputChanged(event) {
-    const target = event.target;
-    const key = target?.dataset?.field;
+  _onValueChanged(key, value) {
     if (!key) {
       return;
     }
 
     const nextConfig = { ...this._config };
-    const value = target.value;
 
     if (key === "title") {
       if (value) {
@@ -1077,7 +1074,6 @@ class UvDashboardCardEditor extends HTMLElement {
     const translations = this._getTranslations();
     const lang = this._getLanguage();
     const detected = this._getDetectedEntities();
-    const sensorEntities = this._getSensorEntities();
     const configEntities = this._config.entities || {};
 
     const entityRoles = [
@@ -1094,40 +1090,23 @@ class UvDashboardCardEditor extends HTMLElement {
       "skin_type_6",
     ];
 
-    const entitySelects = entityRoles
+    const entityPickers = entityRoles
       .map((role) => {
-        const label = translations.editorEntityLabels[role] || role;
+        const label = this._escapeHtml(translations.editorEntityLabels[role] || role);
         const detectedId = detected[role] || "";
-        const configuredId = configEntities[role] || "";
-        const autoLabel = detectedId
-          ? `${translations.editorAuto} (${detectedId})`
-          : translations.editorNone;
-
-        const options = sensorEntities
-          .map(
-            (e) =>
-              `<option value="${this._escapeHtml(e)}" ${configuredId === e ? "selected" : ""}>${this._escapeHtml(e)}</option>`
-          )
-          .join("");
+        const helperText = detectedId
+          ? `${this._escapeHtml(translations.editorAutoDetected)}: ${this._escapeHtml(detectedId)}`
+          : "";
 
         return `
-          <label>
-            ${label}
-            <select data-field="entity_${role}">
-              <option value="" ${!configuredId ? "selected" : ""}>${autoLabel}</option>
-              ${options}
-            </select>
-          </label>
+          <ha-entity-picker
+            data-field="entity_${role}"
+            label="${label}"
+            ${helperText ? `helper-text="${helperText}"` : ""}
+            allow-custom-entity
+          ></ha-entity-picker>
         `;
       })
-      .join("");
-
-    const customUvSensor = this._config.custom_uv_sensor || "";
-    const customUvOptions = sensorEntities
-      .map(
-        (e) =>
-          `<option value="${this._escapeHtml(e)}" ${customUvSensor === e ? "selected" : ""}>${this._escapeHtml(e)}</option>`
-      )
       .join("");
 
     this.shadowRoot.innerHTML = `
@@ -1135,45 +1114,12 @@ class UvDashboardCardEditor extends HTMLElement {
         :host {
           display: block;
           color: var(--primary-text-color);
-          font-family: var(
-            --paper-font-common-base_-_font-family,
-            "Inter",
-            "Segoe UI",
-            system-ui,
-            sans-serif
-          );
         }
 
         .editor {
           display: grid;
           gap: 16px;
           padding: 12px 0;
-        }
-
-        label {
-          display: grid;
-          gap: 6px;
-          font-size: 13px;
-          color: var(--secondary-text-color);
-        }
-
-        input,
-        select {
-          padding: 10px 12px;
-          border-radius: 8px;
-          border: 1px solid rgba(0, 0, 0, 0.16);
-          background: var(--card-background-color, #fff);
-          color: var(--primary-text-color);
-          font: inherit;
-        }
-
-        .section-title {
-          font-size: 14px;
-          font-weight: 600;
-          color: var(--primary-text-color);
-          margin-top: 8px;
-          padding-bottom: 4px;
-          border-bottom: 1px solid rgba(0, 0, 0, 0.08);
         }
 
         .help-text {
@@ -1192,6 +1138,7 @@ class UvDashboardCardEditor extends HTMLElement {
           font-weight: 600;
           color: var(--primary-text-color);
           padding: 8px 0;
+          border-bottom: 1px solid var(--divider-color, rgba(0, 0, 0, 0.08));
         }
 
         .entity-grid {
@@ -1199,51 +1146,88 @@ class UvDashboardCardEditor extends HTMLElement {
           gap: 12px;
           padding-top: 8px;
         }
+
+        ha-entity-picker,
+        ha-select,
+        ha-textfield {
+          display: block;
+          width: 100%;
+        }
       </style>
       <div class="editor" lang="${lang}">
-        <label>
-          ${translations.editorTitle}
-          <input
-            type="text"
-            data-field="title"
-            placeholder="${translations.title}"
-          />
-        </label>
-        <label>
-          ${translations.editorLanguage}
-          <select data-field="language">
-            <option value="auto" ${(this._config.language || "auto") === "auto" ? "selected" : ""}>${translations.editorAuto}</option>
-            <option value="de" ${this._config.language === "de" ? "selected" : ""}>${translations.editorGerman}</option>
-            <option value="en" ${this._config.language === "en" ? "selected" : ""}>${translations.editorEnglish}</option>
-          </select>
-        </label>
+        <ha-textfield
+          data-field="title"
+          label="${this._escapeHtml(translations.editorTitle)}"
+          placeholder="${this._escapeHtml(translations.title)}"
+        ></ha-textfield>
 
-        <label>
-          ${translations.editorCustomUv}
-          <select data-field="custom_uv_sensor">
-            <option value="" ${!customUvSensor ? "selected" : ""}>${translations.editorNone}</option>
-            ${customUvOptions}
-          </select>
-        </label>
+        <ha-select
+          data-field="language"
+          label="${this._escapeHtml(translations.editorLanguage)}"
+          fix-width
+        >
+          <mwc-list-item value="auto">${translations.editorAuto}</mwc-list-item>
+          <mwc-list-item value="de">${translations.editorGerman}</mwc-list-item>
+          <mwc-list-item value="en">${translations.editorEnglish}</mwc-list-item>
+        </ha-select>
+
+        <ha-entity-picker
+          data-field="custom_uv_sensor"
+          label="${this._escapeHtml(translations.editorCustomUv)}"
+          allow-custom-entity
+        ></ha-entity-picker>
         <div class="help-text">${translations.editorCustomUvHelp}</div>
 
         <details>
           <summary>${translations.editorEntities}</summary>
           <div class="entity-grid">
-            ${entitySelects}
+            ${entityPickers}
           </div>
         </details>
       </div>
     `;
 
-    const titleInput = this.shadowRoot.querySelector('input[data-field="title"]');
-    if (titleInput) {
-      titleInput.value = this._config.title || "";
+    // Set ha-textfield value.
+    const titleField = this.shadowRoot.querySelector("ha-textfield[data-field='title']");
+    if (titleField) {
+      titleField.value = this._config.title || "";
+      titleField.addEventListener("change", (e) =>
+        this._onValueChanged("title", e.target.value)
+      );
+      titleField.addEventListener("input", (e) =>
+        this._onValueChanged("title", e.target.value)
+      );
     }
 
-    this.shadowRoot.querySelectorAll("input, select").forEach((element) => {
-      element.addEventListener("change", (event) => this._onInputChanged(event));
-      element.addEventListener("input", (event) => this._onInputChanged(event));
+    // Set ha-select value after its internal rendering completes.
+    // ha-select (mwc-select) needs a frame to initialize its list items
+    // before the value property can be applied correctly.
+    const langSelect = this.shadowRoot.querySelector("ha-select[data-field='language']");
+    if (langSelect) {
+      langSelect.addEventListener("value-changed", (e) =>
+        this._onValueChanged("language", e.detail.value)
+      );
+      requestAnimationFrame(() => {
+        langSelect.value = this._config.language || "auto";
+      });
+    }
+
+    // Set ha-entity-picker hass, domain filter, and initial values.
+    // Both the custom UV sensor and entity override pickers are restricted to
+    // sensor/binary_sensor domains, matching the original selector behaviour.
+    this.shadowRoot.querySelectorAll("ha-entity-picker").forEach((picker) => {
+      picker.hass = this._hass;
+      picker.includeDomains = ["sensor", "binary_sensor"];
+      const field = picker.dataset.field;
+      if (field === "custom_uv_sensor") {
+        picker.value = this._config.custom_uv_sensor || "";
+      } else if (field && field.startsWith("entity_")) {
+        const role = field.replace("entity_", "");
+        picker.value = configEntities[role] || "";
+      }
+      picker.addEventListener("value-changed", (e) =>
+        this._onValueChanged(picker.dataset.field, e.detail.value)
+      );
     });
   }
 }
