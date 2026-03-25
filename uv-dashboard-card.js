@@ -688,7 +688,7 @@ class UvDashboardCard extends HTMLElement {
         .alert-card {
           border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
           border-radius: 8px;
-          background: rgba(255, 255, 255, 0.52);
+          background: color-mix(in srgb, var(--card-background-color, #fff) 52%, transparent);
         }
 
         .metric-card {
@@ -739,11 +739,11 @@ class UvDashboardCard extends HTMLElement {
         }
 
         .uv-badge {
-          color: #fff;
+          color: var(--text-primary-color, #fff);
         }
 
         .protection-pill {
-          background: rgba(0, 0, 0, 0.06);
+          background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
           color: var(--primary-text-color);
         }
 
@@ -780,7 +780,7 @@ class UvDashboardCard extends HTMLElement {
           width: 18px;
           height: 18px;
           border-radius: 50%;
-          border: 3px solid #fff;
+          border: 3px solid var(--card-background-color, #fff);
           background: ${uvMeta.color};
           transform: translate(-50%, -50%);
           left: ${scalePosition}%;
@@ -806,7 +806,7 @@ class UvDashboardCard extends HTMLElement {
           text-align: center;
           padding: 10px 6px;
           border-radius: 8px;
-          background: rgba(255, 255, 255, 0.42);
+          background: color-mix(in srgb, var(--card-background-color, #fff) 42%, transparent);
         }
 
         .skin-dot {
@@ -814,7 +814,7 @@ class UvDashboardCard extends HTMLElement {
           width: 16px;
           height: 16px;
           border-radius: 50%;
-          border: 1px solid rgba(0, 0, 0, 0.18);
+          border: 1px solid color-mix(in srgb, var(--primary-text-color) 18%, transparent);
           margin-bottom: 8px;
         }
 
@@ -840,7 +840,7 @@ class UvDashboardCard extends HTMLElement {
         }
 
         .alert-card {
-          background: rgba(255, 255, 255, 0.52);
+          background: color-mix(in srgb, var(--card-background-color, #fff) 52%, transparent);
         }
 
         .alert-copy {
@@ -954,6 +954,20 @@ class UvDashboardCard extends HTMLElement {
 }
 
 class UvDashboardCardEditor extends HTMLElement {
+  static _entityRoles = [
+    "current_uv",
+    "max_uv",
+    "uv_level",
+    "ozone",
+    "protection_window",
+    "skin_type_1",
+    "skin_type_2",
+    "skin_type_3",
+    "skin_type_4",
+    "skin_type_5",
+    "skin_type_6",
+  ];
+
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
@@ -972,11 +986,12 @@ class UvDashboardCardEditor extends HTMLElement {
     if (!hadHass) {
       this._render();
     } else {
-      // Update hass on entity pickers without a full re-render to prevent
+      // Update hass on ha-form without a full re-render to prevent
       // the editor from resetting while the user is editing.
-      this.shadowRoot.querySelectorAll("ha-entity-picker").forEach((picker) => {
-        picker.hass = hass;
-      });
+      const form = this.shadowRoot?.querySelector("ha-form");
+      if (form) {
+        form.hass = hass;
+      }
     }
   }
 
@@ -1002,112 +1017,76 @@ class UvDashboardCardEditor extends HTMLElement {
     return card._getTranslations();
   }
 
-  _escapeHtml(text) {
-    const div = document.createElement("div");
-    div.textContent = String(text);
-    return div.innerHTML;
-  }
-
   // Get auto-detected entities for display in editor.
   _getDetectedEntities() {
     return UvDashboardCard.prototype._autoDetectEntities(this._hass);
   }
 
-  _onValueChanged(key, value) {
-    if (!key) {
-      return;
-    }
+  // Flatten config into ha-form data (entity overrides promoted to top level).
+  _configToFormData() {
+    const entities = this._config.entities || {};
+    return {
+      title: this._config.title || "",
+      language: this._config.language || "auto",
+      custom_uv_sensor: this._config.custom_uv_sensor || "",
+      ...entities,
+    };
+  }
 
-    const nextConfig = { ...this._config };
+  // Build ha-form schema with selectors for all config options.
+  _getSchema() {
+    const translations = this._getTranslations();
+    const roles = UvDashboardCardEditor._entityRoles;
 
-    if (key === "title") {
-      if (value) {
-        nextConfig.title = value;
-      } else {
-        delete nextConfig.title;
-      }
-    }
-
-    if (key === "language") {
-      nextConfig.language = value || "auto";
-    }
-
-    if (key === "custom_uv_sensor") {
-      if (value) {
-        nextConfig.custom_uv_sensor = value;
-      } else {
-        delete nextConfig.custom_uv_sensor;
-      }
-    }
-
-    // Handle entity overrides.
-    if (key.startsWith("entity_")) {
-      const role = key.replace("entity_", "");
-      if (!nextConfig.entities) {
-        nextConfig.entities = {};
-      }
-      if (value) {
-        nextConfig.entities[role] = value;
-      } else {
-        delete nextConfig.entities[role];
-      }
-      if (Object.keys(nextConfig.entities).length === 0) {
-        delete nextConfig.entities;
-      }
-    }
-
-    this._config = nextConfig;
-    this.dispatchEvent(
-      new CustomEvent("config-changed", {
-        detail: { config: nextConfig },
-        bubbles: true,
-        composed: true,
-      })
-    );
+    return [
+      {
+        name: "title",
+        selector: { text: {} },
+      },
+      {
+        name: "language",
+        selector: {
+          select: {
+            mode: "dropdown",
+            options: [
+              { value: "auto", label: translations.editorAuto },
+              { value: "de", label: translations.editorGerman },
+              { value: "en", label: translations.editorEnglish },
+            ],
+          },
+        },
+      },
+      {
+        name: "custom_uv_sensor",
+        selector: {
+          entity: {
+            domain: ["sensor", "binary_sensor"],
+          },
+        },
+      },
+      {
+        type: "expandable",
+        title: translations.editorEntities,
+        schema: roles.map((role) => ({
+          name: role,
+          selector: {
+            entity: {
+              domain: ["sensor", "binary_sensor"],
+            },
+          },
+        })),
+      },
+    ];
   }
 
   _render() {
-    if (!this.shadowRoot) {
+    if (!this.shadowRoot || !this._hass) {
       return;
     }
 
     const translations = this._getTranslations();
-    const lang = this._getLanguage();
     const detected = this._getDetectedEntities();
-    const configEntities = this._config.entities || {};
-
-    const entityRoles = [
-      "current_uv",
-      "max_uv",
-      "uv_level",
-      "ozone",
-      "protection_window",
-      "skin_type_1",
-      "skin_type_2",
-      "skin_type_3",
-      "skin_type_4",
-      "skin_type_5",
-      "skin_type_6",
-    ];
-
-    const entityPickers = entityRoles
-      .map((role) => {
-        const label = this._escapeHtml(translations.editorEntityLabels[role] || role);
-        const detectedId = detected[role] || "";
-        const helperText = detectedId
-          ? `${this._escapeHtml(translations.editorAutoDetected)}: ${this._escapeHtml(detectedId)}`
-          : "";
-
-        return `
-          <ha-entity-picker
-            data-field="entity_${role}"
-            label="${label}"
-            ${helperText ? `helper-text="${helperText}"` : ""}
-            allow-custom-entity
-          ></ha-entity-picker>
-        `;
-      })
-      .join("");
+    const roles = UvDashboardCardEditor._entityRoles;
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -1115,120 +1094,83 @@ class UvDashboardCardEditor extends HTMLElement {
           display: block;
           color: var(--primary-text-color);
         }
-
-        .editor {
-          display: grid;
-          gap: 16px;
-          padding: 12px 0;
-        }
-
-        .help-text {
-          font-size: 11px;
-          color: var(--secondary-text-color);
-          margin-top: -8px;
-        }
-
-        details {
-          margin-top: 4px;
-        }
-
-        summary {
-          cursor: pointer;
-          font-size: 14px;
-          font-weight: 600;
-          color: var(--primary-text-color);
-          padding: 8px 0;
-          border-bottom: 1px solid var(--divider-color, rgba(0, 0, 0, 0.08));
-        }
-
-        .entity-grid {
-          display: grid;
-          gap: 12px;
-          padding-top: 8px;
-        }
-
-        ha-entity-picker,
-        ha-select,
-        ha-textfield {
+        ha-form {
           display: block;
-          width: 100%;
         }
       </style>
-      <div class="editor" lang="${lang}">
-        <ha-textfield
-          data-field="title"
-          label="${this._escapeHtml(translations.editorTitle)}"
-          placeholder="${this._escapeHtml(translations.title)}"
-        ></ha-textfield>
-
-        <ha-select
-          data-field="language"
-          label="${this._escapeHtml(translations.editorLanguage)}"
-          fix-width
-        >
-          <mwc-list-item value="auto">${translations.editorAuto}</mwc-list-item>
-          <mwc-list-item value="de">${translations.editorGerman}</mwc-list-item>
-          <mwc-list-item value="en">${translations.editorEnglish}</mwc-list-item>
-        </ha-select>
-
-        <ha-entity-picker
-          data-field="custom_uv_sensor"
-          label="${this._escapeHtml(translations.editorCustomUv)}"
-          allow-custom-entity
-        ></ha-entity-picker>
-        <div class="help-text">${translations.editorCustomUvHelp}</div>
-
-        <details>
-          <summary>${translations.editorEntities}</summary>
-          <div class="entity-grid">
-            ${entityPickers}
-          </div>
-        </details>
-      </div>
     `;
 
-    // Set ha-textfield value.
-    const titleField = this.shadowRoot.querySelector("ha-textfield[data-field='title']");
-    if (titleField) {
-      titleField.value = this._config.title || "";
-      titleField.addEventListener("change", (e) =>
-        this._onValueChanged("title", e.target.value)
-      );
-      titleField.addEventListener("input", (e) =>
-        this._onValueChanged("title", e.target.value)
-      );
-    }
+    const form = document.createElement("ha-form");
+    form.hass = this._hass;
+    form.data = this._configToFormData();
+    form.schema = this._getSchema();
 
-    // Set ha-select value after its internal rendering completes.
-    // ha-select (mwc-select) needs a frame to initialize its list items
-    // before the value property can be applied correctly.
-    const langSelect = this.shadowRoot.querySelector("ha-select[data-field='language']");
-    if (langSelect) {
-      langSelect.addEventListener("value-changed", (e) =>
-        this._onValueChanged("language", e.detail.value)
-      );
-      requestAnimationFrame(() => {
-        langSelect.value = this._config.language || "auto";
-      });
-    }
+    form.computeLabel = (schema) => {
+      if (schema.name === "title") return translations.editorTitle;
+      if (schema.name === "language") return translations.editorLanguage;
+      if (schema.name === "custom_uv_sensor") return translations.editorCustomUv;
+      return translations.editorEntityLabels?.[schema.name] || schema.name;
+    };
 
-    // Set ha-entity-picker hass, domain filter, and initial values.
-    // Both the custom UV sensor and entity override pickers are restricted to
-    // sensor/binary_sensor domains, matching the original selector behaviour.
-    this.shadowRoot.querySelectorAll("ha-entity-picker").forEach((picker) => {
-      picker.hass = this._hass;
-      picker.includeDomains = ["sensor", "binary_sensor"];
-      const field = picker.dataset.field;
-      if (field === "custom_uv_sensor") {
-        picker.value = this._config.custom_uv_sensor || "";
-      } else if (field && field.startsWith("entity_")) {
-        const role = field.replace("entity_", "");
-        picker.value = configEntities[role] || "";
+    form.computeHelper = (schema) => {
+      if (schema.name === "custom_uv_sensor") {
+        return translations.editorCustomUvHelp;
       }
-      picker.addEventListener("value-changed", (e) =>
-        this._onValueChanged(picker.dataset.field, e.detail.value)
+      const detectedId = detected?.[schema.name];
+      if (detectedId) {
+        return `${translations.editorAutoDetected}: ${detectedId}`;
+      }
+      return "";
+    };
+
+    form.addEventListener("value-changed", (e) => {
+      e.stopPropagation();
+      const formData = e.detail.value;
+
+      // Reconstruct config from flat form data.
+      const nextConfig = { ...this._config };
+
+      // Title.
+      if (formData.title) {
+        nextConfig.title = formData.title;
+      } else {
+        delete nextConfig.title;
+      }
+
+      // Language.
+      nextConfig.language = formData.language || "auto";
+
+      // Custom UV sensor.
+      if (formData.custom_uv_sensor) {
+        nextConfig.custom_uv_sensor = formData.custom_uv_sensor;
+      } else {
+        delete nextConfig.custom_uv_sensor;
+      }
+
+      // Entity overrides (promoted from flat keys back into nested object).
+      const entities = {};
+      for (const role of roles) {
+        if (formData[role]) {
+          entities[role] = formData[role];
+        }
+      }
+      if (Object.keys(entities).length > 0) {
+        nextConfig.entities = entities;
+      } else {
+        delete nextConfig.entities;
+      }
+
+      this._config = nextConfig;
+      this.dispatchEvent(
+        new CustomEvent("config-changed", {
+          detail: { config: nextConfig },
+          bubbles: true,
+          composed: true,
+        })
       );
     });
+
+    this.shadowRoot.appendChild(form);
   }
 }
 
